@@ -59,7 +59,7 @@ defmodule VirtualCrypto.Notification.Webhook.CloudflareWorkers do
         )
 
       _ ->
-        nil
+        :nop
     end
   end
 
@@ -160,7 +160,6 @@ defmodule VirtualCrypto.Notification.Webhook.CloudflareWorkers do
   @impl VirtualCrypto.Notification.Behaviour
   def notify_claim_update(exterior, events) when is_list(events) do
     user = VirtualCrypto.Exterior.User.Resolvable.resolve(exterior)
-
     case execute_json(user, %{type: @event_type_claim_status_update, data: events}) do
       {:ok, %{status_code: 200, headers: headers}} ->
         Logger.info(
@@ -171,6 +170,7 @@ defmodule VirtualCrypto.Notification.Webhook.CloudflareWorkers do
         Logger.info(
           "dispatching claim_update failed: user=#{user.application_id} proxy-status=#{status_code}"
         )
+      :nop -> nil
     end
   end
 end

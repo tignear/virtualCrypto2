@@ -278,7 +278,7 @@ defmodule VirtualCryptoWeb.Interaction.Command do
     user = get_user(payload)
     int_user_id = user["id"] |> String.to_integer()
 
-    case Money.approve_claim(id, %DiscordUser{id: int_user_id},%{}) do
+    case Money.approve_claim(id, %DiscordUser{id: int_user_id}, %{}) do
       {:ok, %{claim: claim}} -> {:ok, "approve", claim}
       {:error, err} -> {:error, "approve", err}
     end
@@ -294,7 +294,7 @@ defmodule VirtualCryptoWeb.Interaction.Command do
     user = get_user(payload)
     int_user_id = user["id"] |> String.to_integer()
 
-    case Money.deny_claim(id, %DiscordUser{id: int_user_id},%{}) do
+    case Money.deny_claim(id, %DiscordUser{id: int_user_id}, %{}) do
       {:ok, %{claim: claim}} -> {:ok, "deny", claim}
       {:error, err} -> {:error, "deny", err}
     end
@@ -310,7 +310,7 @@ defmodule VirtualCryptoWeb.Interaction.Command do
     user = get_user(payload)
     int_user_id = user["id"] |> String.to_integer()
 
-    case Money.cancel_claim(id, %DiscordUser{id: int_user_id},%{}) do
+    case Money.cancel_claim(id, %DiscordUser{id: int_user_id}, %{}) do
       {:ok, %{claim: claim}} -> {:ok, "cancel", claim}
       {:error, err} -> {:error, "cancel", err}
     end

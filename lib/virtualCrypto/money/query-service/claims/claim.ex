@@ -40,6 +40,28 @@ defmodule VirtualCrypto.Money.Query.Claim do
     query |> Repo.one()
   end
 
+  def get_claim_by_id_with_lock(id) do
+    query =
+      from(claim in Money.Claim,
+        join: currency in Money.Currency,
+        join: claimant in VirtualCrypto.User.User,
+        join: payer in VirtualCrypto.User.User,
+        on:
+          claim.payer_user_id == payer.id and claim.currency_id == currency.id and
+            claim.claimant_user_id == claimant.id,
+        where: claim.id == ^id,
+        select: %{
+          claim: claim,
+          currency: currency,
+          claimant: claimant,
+          payer: payer
+        },
+        lock: fragment("FOR UPDATE OF ?", claim)
+      )
+
+    query |> Repo.one()
+  end
+
   def get_claim_by_id(executor_user_id, id) do
     query =
       from(claim in Money.Claim,
@@ -69,6 +91,36 @@ defmodule VirtualCrypto.Money.Query.Claim do
     query |> Repo.one()
   end
 
+  def get_claim_by_id_with_lock(executor_user_id, id) do
+    query =
+      from(claim in Money.Claim,
+        join: currency in Money.Currency,
+        join: claimant in VirtualCrypto.User.User,
+        join: payer in VirtualCrypto.User.User,
+        on:
+          claim.payer_user_id == payer.id and claim.currency_id == currency.id and
+            claim.claimant_user_id == claimant.id,
+        left_join: claim_metadata in VirtualCrypto.Money.ClaimMetadata,
+        on:
+          claim.id == claim_metadata.claim_id and
+            claim_metadata.owner_user_id == ^executor_user_id,
+        where:
+          claim.id == ^id and
+            (claim.payer_user_id == ^executor_user_id or
+               claim.claimant_user_id == ^executor_user_id),
+        select: %{
+          claim: claim,
+          currency: currency,
+          claimant: claimant,
+          payer: payer,
+          metadata: claim_metadata.metadata
+        },
+        lock: fragment("FOR UPDATE OF ?,?", claim, claim_metadata)
+      )
+
+    query |> Repo.one()
+  end
+
   def get_claim_by_ids(ids) do
     query =
       from(claim in Money.Claim,
@@ -85,6 +137,29 @@ defmodule VirtualCrypto.Money.Query.Claim do
           claimant: claimant,
           payer: payer
         }
+      )
+
+    result = query |> Repo.all() |> Map.new(fn %{claim: %{id: id}} = m -> {id, m} end)
+    ids |> Enum.map(fn id -> Map.get(result, id) end)
+  end
+
+  def get_claim_by_ids_with_lock(ids) do
+    query =
+      from(claim in Money.Claim,
+        join: currency in Money.Currency,
+        join: claimant in VirtualCrypto.User.User,
+        join: payer in VirtualCrypto.User.User,
+        on:
+          claim.payer_user_id == payer.id and claim.currency_id == currency.id and
+            claim.claimant_user_id == claimant.id,
+        where: claim.id in ^ids,
+        select: %{
+          claim: claim,
+          currency: currency,
+          claimant: claimant,
+          payer: payer
+        },
+        lock: fragment("FOR UPDATE OF ?", claim)
       )
 
     result = query |> Repo.all() |> Map.new(fn %{claim: %{id: id}} = m -> {id, m} end)
@@ -115,6 +190,37 @@ defmodule VirtualCrypto.Money.Query.Claim do
           payer: payer,
           metadata: claim_metadata.metadata
         }
+      )
+
+    result = query |> Repo.all() |> Map.new(fn %{claim: %{id: id}} = m -> {id, m} end)
+    ids |> Enum.map(fn id -> Map.get(result, id) end)
+  end
+
+  def get_claim_by_ids_with_lock(executor_user_id, ids) do
+    query =
+      from(claim in Money.Claim,
+        join: currency in Money.Currency,
+        join: claimant in VirtualCrypto.User.User,
+        join: payer in VirtualCrypto.User.User,
+        on:
+          claim.payer_user_id == payer.id and claim.currency_id == currency.id and
+            claim.claimant_user_id == claimant.id,
+        left_join: claim_metadata in VirtualCrypto.Money.ClaimMetadata,
+        on:
+          claim.id == claim_metadata.claim_id and
+            claim_metadata.owner_user_id == ^executor_user_id,
+        where:
+          claim.id in ^ids and
+            (claim.payer_user_id == ^executor_user_id or
+               claim.claimant_user_id == ^executor_user_id),
+        select: %{
+          claim: claim,
+          currency: currency,
+          claimant: claimant,
+          payer: payer,
+          metadata: claim_metadata.metadata
+        },
+        lock: fragment("FOR UPDATE OF ?,?", claim, claim_metadata)
       )
 
     result = query |> Repo.all() |> Map.new(fn %{claim: %{id: id}} = m -> {id, m} end)
@@ -232,6 +338,13 @@ defmodule VirtualCrypto.Money.Query.Claim do
       nil -> %{}
       %{metadata: metadata} -> metadata
     end
+  end
+
+  def get_claims_metadata(claim_ids, operator_user_id) do
+    Money.ClaimMetadata
+         |> select([c], %{claim_id: c.claim_id,metadata: c.metadata})
+         |> where([c], c.claim_id in ^claim_ids and c.owner_user_id == ^operator_user_id)
+         |> Repo.all()
   end
 
   def delete_claim_metadata(claim_id, operator_user_id) do
