@@ -1,10 +1,15 @@
-defmodule VirtualCrypto.Notification.Webhook do
+defmodule VirtualCrypto.Notification.Webhook.CloudflareWorkers do
   import Ecto.Query
   alias VirtualCrypto.Repo
   require Logger
 
+  @behaviour VirtualCrypto.Notification.Webhook.Behaviour
+  @behaviour VirtualCrypto.Notification.Behaviour
+
   @spec get_application_webhook_data(VirtualCrypto.User.User.t()) ::
           %{webhook_url: binary(), public_key: binary(), private_key: binary()} | nil
+  @event_type_verification 1
+  @event_type_claim_status_update 2
   defp get_application_webhook_data(%{application_id: nil}) do
     nil
   end
@@ -23,7 +28,7 @@ defmodule VirtualCrypto.Notification.Webhook do
     Repo.one(q)
   end
 
-  def execute_raw(forward, body, timestamp, public_key, private_key) do
+  defp execute_raw(forward, body, timestamp, public_key, private_key) do
     webhook_proxy = Application.get_env(:virtualCrypto, :webhook_proxy)
     timestamp = to_string(timestamp)
     message = timestamp <> body
@@ -42,7 +47,7 @@ defmodule VirtualCrypto.Notification.Webhook do
     })
   end
 
-  def execute_json(user, event) do
+  defp execute_json(user, event) do
     case get_application_webhook_data(user) do
       %{webhook_url: webhook_url, public_key: public_key, private_key: private_key} ->
         execute_raw(
@@ -54,7 +59,6 @@ defmodule VirtualCrypto.Notification.Webhook do
         )
 
       _ ->
-        Logger.warn("get_application_webhook_data failed")
         nil
     end
   end
@@ -62,7 +66,7 @@ defmodule VirtualCrypto.Notification.Webhook do
   defp _verify(webhook_url, public_key, private_key) do
     case execute_raw(
            webhook_url,
-           Jason.encode!(%{type: 1}),
+           Jason.encode!(%{type: @event_type_verification}),
            :os.system_time(:second),
            public_key,
            private_key
@@ -71,8 +75,6 @@ defmodule VirtualCrypto.Notification.Webhook do
         if res.status_code != 200 do
           Logger.warn("proxy respond with #{res.status_code}")
         end
-
-        IO.inspect(res)
 
         case res.headers |> List.keyfind("x-status", 0) do
           nil ->
@@ -83,10 +85,10 @@ defmodule VirtualCrypto.Notification.Webhook do
           {_, v} ->
             case Integer.parse(v) do
               {v, ""} ->
-                {:ok, v}
+                {:ok, v, Jason.decode(res.body)}
 
               _ ->
-                Logger.warn("invalid X-Status header value")
+                Logger.warn("invalid x-status header value")
 
                 :error
             end
@@ -97,12 +99,13 @@ defmodule VirtualCrypto.Notification.Webhook do
     end
   end
 
+  @impl VirtualCrypto.Notification.Webhook.Behaviour
   def verify(requester, webhook_url, public_key, private_key) do
     requests = [
       fn ->
         case _verify(webhook_url, public_key, private_key) do
-          {:ok, 200} -> :ok
-          {:ok, _} -> :verification_failed
+          {:ok, 200, {:ok, %{"type" => @event_type_verification}}} -> :ok
+          {:ok, _, _} -> :verification_failed
           :error -> :internal_server_error
         end
       end,
@@ -111,8 +114,8 @@ defmodule VirtualCrypto.Notification.Webhook do
           :public_key.generate_key({:namedCurve, :ed25519})
 
         case _verify(webhook_url, public_key, private_key) do
-          {:ok, 401} -> :ok
-          {:ok, _} -> :verification_failed
+          {:ok, 401, _} -> :ok
+          {:ok, _, _} -> :verification_failed
           :error -> :internal_server_error
         end
       end
@@ -151,6 +154,23 @@ defmodule VirtualCrypto.Notification.Webhook do
 
       {:long, _} ->
         {:error, {:rate_limit_exceeded, :retry_after_1_day}}
+    end
+  end
+
+  @impl VirtualCrypto.Notification.Behaviour
+  def notify_claim_update(exterior, events) when is_list(events) do
+    user = VirtualCrypto.Exterior.User.Resolvable.resolve(exterior)
+
+    case execute_json(user, %{type: @event_type_claim_status_update, data: events}) do
+      {:ok, %{status_code: 200, headers: headers}} ->
+        Logger.info(
+          "dispatched claim_update: user=#{user.application_id} x-status=#{headers |> List.keyfind("x-status", 0) |> elem(1)}"
+        )
+
+      {:ok, %{status_code: status_code}} ->
+        Logger.info(
+          "dispatching claim_update failed: user=#{user.application_id} proxy-status=#{status_code}"
+        )
     end
   end
 end

@@ -5,7 +5,7 @@ defmodule ClaimControllerTest.V1 do
   alias VirtualCrypto.Exterior.User.Discord, as: DiscordUser
 
   defmodule TestDiscordAPi do
-    # @behaviour Discord.Api.Behavior
+    # @behaviour Discord.Api.Behaviour
 
     def get_user(user_id) do
       %{"id" => to_string(user_id)}

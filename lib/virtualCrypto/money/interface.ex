@@ -358,13 +358,50 @@ defmodule VirtualCrypto.Money do
     x
   end
 
-  @spec approve_claim(non_neg_integer(), UserResolvable.t()) ::
+  defp format_claim_for_notification(%{
+         claim: claim,
+         currency: currency,
+         payer: payer,
+         metadata: metadata
+       }) do
+    %{
+      id: claim.id,
+      status:
+        case claim.status do
+          "approved" -> :approved
+          "denied" -> :denied
+        end,
+      amount: to_string(claim.amount),
+      updated_at: claim.updated_at,
+      metadata: metadata,
+      payer: %{
+        id: to_string(payer.id),
+        discord: %{
+          id:
+            if payer.discord_id do
+              to_string(payer.discord_id)
+            else
+              nil
+            end
+        }
+      },
+      currency: %{
+        id: currency.id,
+        unit: currency.unit,
+        name: currency.name,
+        guild: to_string(currency.guild_id),
+        pool_amount: to_string(currency.pool_amount)
+      }
+    }
+  end
+
+  @spec approve_claim(non_neg_integer(), UserResolvable.t(), map() | nil) ::
           {:ok, claim_t}
           | {:error, :not_found}
           | {:error, :not_found_currency}
           | {:error, :not_found_sender_asset}
           | {:error, :not_enough_amount}
-  def approve_claim(id, operator) do
+  def approve_claim(id, operator, metadata) do
     case Repo.transaction(fn ->
            with {:get_claim,
                  %{
@@ -384,9 +421,17 @@ defmodule VirtualCrypto.Money do
                     amount,
                     currency.unit
                   ),
-                {:ok, claim} <-
-                  VirtualCrypto.Money.Query.Claim.approve_claim(id) do
-             %{claim: claim, currency: currency, claimant: claimant, payer: payer}
+                {:ok, %{claim: claim, metadata: metadata}} <-
+                  VirtualCrypto.Money.Query.Claim.approve_claim(payer.id, id, metadata) do
+             %{
+               claim: claim,
+               currency: currency,
+               claimant: claimant,
+               payer: payer,
+               metadata: metadata,
+               claimant_metadata:
+                 VirtualCrypto.Money.Query.Claim.get_claim_metadata(claim.id, claimant.id)
+             }
            else
              {:get_claim, _} ->
                Repo.rollback(:not_found)
@@ -404,15 +449,24 @@ defmodule VirtualCrypto.Money do
                Repo.rollback(v)
            end
          end) do
-      {:ok, v} -> {:ok, v}
-      {:error, v} -> {:error, v}
+      {:ok, v} ->
+        {claimant_metadata, v} = Map.pop!(v, :claimant_metadata)
+
+        VirtualCrypto.Notification.Dispatcher.notify_claim_update(v.claimant, [
+          format_claim_for_notification(%{v | metadata: claimant_metadata})
+        ])
+
+        {:ok, v}
+
+      {:error, v} ->
+        {:error, v}
     end
   end
 
-  @spec cancel_claim(non_neg_integer(), UserResolvable.t()) ::
+  @spec cancel_claim(non_neg_integer(), UserResolvable.t(), map() | nil) ::
           {:ok, claim_t}
           | {:error, :not_found}
-  def cancel_claim(id, operator) do
+  def cancel_claim(id, operator, metadata) do
     case Repo.transaction(fn ->
            with {:get_claim,
                  %{claim: %{status: status}, currency: currency, claimant: claimant, payer: payer}} <-
@@ -420,8 +474,15 @@ defmodule VirtualCrypto.Money do
                 {:validate_operator, true} <-
                   {:validate_operator, UserResolvable.is?(operator, claimant)},
                 {:status, "pending"} <- {:status, status},
-                {:ok, claim} <- VirtualCrypto.Money.Query.Claim.cancel_claim(id) do
-             %{claim: claim, currency: currency, claimant: claimant, payer: payer}
+                {:ok, %{claim: claim, metadata: metadata}} <-
+                  VirtualCrypto.Money.Query.Claim.cancel_claim(claimant.id, id, metadata) do
+             %{
+               claim: claim,
+               currency: currency,
+               claimant: claimant,
+               payer: payer,
+               metadata: metadata
+             }
            else
              {:get_claim, _} ->
                Repo.rollback(:not_found)
@@ -436,15 +497,18 @@ defmodule VirtualCrypto.Money do
                Repo.rollback(:not_found)
            end
          end) do
-      {:ok, v} -> {:ok, v}
-      {:error, v} -> {:error, v}
+      {:ok, v} ->
+        {:ok, v}
+
+      {:error, v} ->
+        {:error, v}
     end
   end
 
-  @spec deny_claim(non_neg_integer(), UserResolvable.t()) ::
+  @spec deny_claim(non_neg_integer(), UserResolvable.t(), map() | nil) ::
           {:ok, claim_t}
           | {:error, :not_found}
-  def deny_claim(id, operator) do
+  def deny_claim(id, operator, metadata) do
     case Repo.transaction(fn ->
            with {:get_claim,
                  %{claim: %{status: status}, currency: currency, claimant: claimant, payer: payer}} <-
@@ -452,8 +516,17 @@ defmodule VirtualCrypto.Money do
                 {:validate_operator, true} <-
                   {:validate_operator, UserResolvable.is?(operator, payer)},
                 {:status, "pending"} <- {:status, status},
-                {:ok, claim} <- VirtualCrypto.Money.Query.Claim.deny_claim(id) do
-             %{claim: claim, currency: currency, claimant: claimant, payer: payer}
+                {:ok, %{claim: claim, metadata: metadata}} <-
+                  VirtualCrypto.Money.Query.Claim.deny_claim(payer.id, id, metadata) do
+             %{
+               claim: claim,
+               currency: currency,
+               claimant: claimant,
+               payer: payer,
+               metadata: metadata,
+               claimant_metadata:
+                 VirtualCrypto.Money.Query.Claim.get_claim_metadata(claim.id, claimant.id)
+             }
            else
              {:get_claim, _} ->
                Repo.rollback(:not_found)
@@ -468,8 +541,17 @@ defmodule VirtualCrypto.Money do
                Repo.rollback(:not_found)
            end
          end) do
-      {:ok, v} -> {:ok, v}
-      {:error, v} -> {:error, v}
+      {:ok, v} ->
+        {claimant_metadata, v} = Map.pop!(v, :claimant_metadata)
+
+        VirtualCrypto.Notification.Dispatcher.notify_claim_update(v.claimant, [
+          format_claim_for_notification(%{v | metadata: claimant_metadata})
+        ])
+
+        {:ok, v}
+
+      {:error, v} ->
+        {:error, v}
     end
   end
 
@@ -656,8 +738,56 @@ defmodule VirtualCrypto.Money do
                 Map.get(partial_claims_grouped, "canceled", [])
                 |> Enum.map(fn e -> claims[e.id] end),
                 time
-              )} do
-        approved ++ denied ++ canceled
+              )},
+           updated_claims <- approved ++ denied ++ canceled,
+           updated_claims_map <- updated_claims |> Map.new(&{&1.id, &1}),
+           claim_claim_id_pairs <-
+             partial_claims
+             |> Enum.filter(fn partial_claim -> Map.has_key?(partial_claim, :metadata) end)
+             |> Enum.map(&{updated_claims_map[&1.id], &1.metadata}) do
+        update_claims_metadata_result =
+          case claim_claim_id_pairs do
+            [] ->
+              {:ok, []}
+
+            [updated_claim | _tail] ->
+              operator_user =
+                if UserResolvable.is?(operator, updated_claim.claimant) do
+                  updated_claim.claimant
+                else
+                  updated_claim.payer
+                end
+
+              case VirtualCrypto.Money.Query.Claim.update_claims_metadata(
+                     operator_user.id,
+                     claim_claim_id_pairs
+                   ) do
+                {:ok, nil} -> {:ok, updated_claims}
+                {:error, x} -> {:error, x}
+              end
+          end
+
+        case {update_claims_metadata_result, updated_claims} do
+          {{:ok, _}, []} ->
+            {:ok, []}
+
+          {{:ok, _}, [updated_claim | _tail]} ->
+            operator_user =
+              if UserResolvable.is?(operator, updated_claim.claimant) do
+                updated_claim.claimant
+              else
+                updated_claim.payer
+              end
+
+            {:ok,
+             VirtualCrypto.Money.Query.Claim.get_claim_by_ids(
+               operator_user.id,
+               updated_claims |> Enum.map(& &1.id)
+             )}
+
+          {:error, x} ->
+            Repo.rollback(x)
+        end
       else
         {:prevent_duplicated_claims, _} ->
           Repo.rollback(:duplicated_claims)
@@ -683,37 +813,72 @@ defmodule VirtualCrypto.Money do
     end)
   end
 
+  defp validate_metadata(nil) do
+    :ok
+  end
+
+  defp validate_metadata(%{} = d) do
+    if map_size(d) > 50 do
+      {:error, :large_metadata}
+    else
+      if d |> Map.keys() |> Enum.all?(fn k -> k |> String.codepoints() |> length <= 40 end) do
+        if d
+           |> Map.values()
+           |> Enum.all?(fn v -> v |> String.codepoints() |> length <= 500 end) do
+          :ok
+        else
+          {:error, :large_value}
+        end
+      else
+        {:error, :large_key}
+      end
+    end
+  end
+
   @doc """
   payer must be discord user
   """
-  @spec create_claim(UserResolvable.t(), UserResolvable.t(), String.t(), pos_integer()) ::
+  @spec create_claim(
+          UserResolvable.t(),
+          UserResolvable.t(),
+          String.t(),
+          pos_integer(),
+          map() | nil
+        ) ::
           {:ok, claim_t}
           | {:error, :not_found_currency}
           | {:error, :invalid_amount}
-  def create_claim(claimant, payer, unit, amount) do
+          | {:error, {:invalid_metadata, atom()}}
+  def create_claim(claimant, payer, unit, amount, metadata) do
+    case validate_metadata(metadata) do
+      :ok ->
+        {:ok, x} =
+          Repo.transaction(fn ->
+            VirtualCrypto.Money.Query.Claim.create_claim(claimant, payer, unit, amount, metadata)
+          end)
+
+        x
+
+      {:error, x} ->
+        {:error, {:invalid_metadata, x}}
+    end
+  end
+
+  @spec get_claim_by_id(UserResolvable.t(), non_neg_integer()) :: claim_t | {:error, :not_found}
+  def get_claim_by_id(executor, id) do
     {:ok, x} =
       Repo.transaction(fn ->
-        VirtualCrypto.Money.Query.Claim.create_claim(claimant, payer, unit, amount)
+        VirtualCrypto.Money.Query.Claim.get_claim_by_id(UserResolvable.resolve_id(executor), id)
       end)
 
     x
   end
 
-  @spec get_claim_by_id(non_neg_integer()) :: claim_t | {:error, :not_found}
-  def get_claim_by_id(id) do
+  @spec get_claim_by_ids(UserResolvable.t(), list(non_neg_integer())) :: list(claim_t | nil)
+  def get_claim_by_ids(executor, ids) do
     {:ok, x} =
       Repo.transaction(fn ->
-        VirtualCrypto.Money.Query.Claim.get_claim_by_id(id)
-      end)
-
-    x
-  end
-
-  @spec get_claim_by_ids(list(non_neg_integer())) :: list(claim_t | nil)
-  def get_claim_by_ids(ids) do
-    {:ok, x} =
-      Repo.transaction(fn ->
-        VirtualCrypto.Money.Query.Claim.get_claim_by_ids(ids)
+        VirtualCrypto.Money.Query.Claim.get_claim_by_ids(UserResolvable.resolve_id(executor), ids)
       end)
 
     x
