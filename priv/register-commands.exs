@@ -150,7 +150,6 @@ defmodule Command do
   end
 
   def claim do
-
     %{
       "name" => "claim",
       "description" => "請求に関するコマンドです。",
@@ -241,15 +240,16 @@ defmodule Command do
     }
   end
 
-  def post_command(url,command,headers) do
+  def post_command(url, command, headers) do
     {:ok, r} = HTTPoison.post(url, Jason.encode!(command), headers)
     IO.puts("#{command["name"]}:#{r.status_code}")
-    if r.status_code == 429 do
-      {_,retry_after} = r.headers|>Enum.find(fn {k,_v}->k=="retry-after" end)
-      IO.puts("retrying after #{retry_after} sec")
-      Process.sleep(String.to_integer(retry_after)*1000)
 
-      post_command(url,command,headers)
+    if r.status_code == 429 do
+      {_, retry_after} = r.headers |> Enum.find(fn {k, _v} -> k == "retry-after" end)
+      IO.puts("retrying after #{retry_after} sec")
+      Process.sleep(String.to_integer(retry_after) * 1000)
+
+      post_command(url, command, headers)
     end
   end
 
@@ -261,16 +261,22 @@ defmodule Command do
       {"Content-Type", "application/json"}
     ]
 
-
     commands = [help(), invite(), give(), pay(), info(), create(), bal(), claim()]
 
     commands
-    |> Enum.each(fn command -> post_command(url,command,headers) end)
+    |> Enum.each(fn command -> post_command(url, command, headers) end)
   end
 end
 
-url = case System.argv() do
-  [] -> "https://discord.com/api/v9/applications/"<>Application.get_env(:virtualCrypto, :client_id)<>"/commands"
-  [guild] -> "https://discord.com/api/v9/applications/"<>Application.get_env(:virtualCrypto, :client_id)<>"/guilds/"<>guild<>"/commands"
-end
+url =
+  case System.argv() do
+    [] ->
+      "https://discord.com/api/v9/applications/" <>
+        Application.get_env(:virtualCrypto, :client_id) <> "/commands"
+
+    [guild] ->
+      "https://discord.com/api/v9/applications/" <>
+        Application.get_env(:virtualCrypto, :client_id) <> "/guilds/" <> guild <> "/commands"
+  end
+
 Command.post_all(url)
