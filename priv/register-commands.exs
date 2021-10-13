@@ -240,20 +240,27 @@ defmodule Command do
     }
   end
 
-  def post_command(url, command, headers) do
-    {:ok, r} = HTTPoison.post(url, Jason.encode!(command), headers)
-    IO.puts("#{command["name"]}:#{r.status_code}")
+  def block do
+    %{
+      "type" => 2,
+      "name" => "block/unblock",
+      "description" => ""
+    }
+  end
+
+  def put_commands(url, commands, headers) do
+    {:ok, r} = HTTPoison.put(url, Jason.encode!(commands), headers)
 
     if r.status_code == 429 do
       {_, retry_after} = r.headers |> Enum.find(fn {k, _v} -> k == "retry-after" end)
       IO.puts("retrying after #{retry_after} sec")
       Process.sleep(String.to_integer(retry_after) * 1000)
 
-      post_command(url, command, headers)
+      put_commands(url, commands, headers)
     end
   end
 
-  def post_all(url) do
+  def register(url) do
     HTTPoison.start()
 
     headers = [
@@ -261,10 +268,8 @@ defmodule Command do
       {"Content-Type", "application/json"}
     ]
 
-    commands = [help(), invite(), give(), pay(), info(), create(), bal(), claim()]
-
-    commands
-    |> Enum.each(fn command -> post_command(url, command, headers) end)
+    commands = [help(), invite(), give(), pay(), info(), create(), bal(), claim(), block()]
+    put_commands(url, commands, headers)
   end
 end
 
@@ -279,4 +284,4 @@ url =
         Application.get_env(:virtualCrypto, :client_id) <> "/guilds/" <> guild <> "/commands"
   end
 
-Command.post_all(url)
+Command.register(url)

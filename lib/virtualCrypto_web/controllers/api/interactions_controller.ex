@@ -118,6 +118,16 @@ defmodule VirtualCryptoWeb.Api.InteractionsController do
     render(conn, "pong.json")
   end
 
+  def verified(conn, %{"type" => 2, "data" => %{"name" => name, "type" => 2} = data} = params) do
+    options =
+      Map.get(data, "options", [])
+      |> parse_options
+
+    render(conn, name <> ".json",
+      params: VirtualCryptoWeb.Interaction.ContextMenu.handle(name, options, params, conn)
+    )
+  end
+
   def verified(conn, %{"type" => 2, "data" => %{"name" => name} = data} = params) do
     options =
       Map.get(data, "options", [])
